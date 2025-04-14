@@ -1,5 +1,5 @@
-import { Request, Response, NextFunction } from "express";
-import { body, param, validationResult } from "express-validator";
+import { body, param } from "express-validator";
+import { validateRequest } from "./validationUtils";
 
 export const validateCreateUser = [
   body("email").isEmail().withMessage("Must be a valid email address"),
@@ -19,25 +19,11 @@ export const validateCreateUser = [
     .isLength({ min: 2, max: 100 })
     .withMessage("Display name must be between 2 and 100 characters"),
   body("roleIds").optional().isArray().withMessage("roleIds must be an array"),
-  (req: Request, res: Response, next: NextFunction): void => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
-    } else {
-      next();
-    }
-  },
+  validateRequest, // Use the utility function for validation
 ];
 
 export const validateUpdateUserRoles = [
   param("id").isString().withMessage("User ID must be a string"),
   body("roleIds").isArray().withMessage("roleIds must be an array"),
-  (req: Request, res: Response, next: NextFunction): void => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
-    } else {
-      next();
-    }
-  },
+  validateRequest, // Use the utility function for validation
 ];

@@ -1,205 +1,202 @@
+// src/tests/unit/controllers/rbacController.test.ts
 import { Request, Response } from "express";
-import { RoleModel } from "../../../models/Role";
 import {
   createRole,
   getAllRoles,
   createPermission,
-} from "../../../controllers/rbacController";
+} from "@/controllers/rbacController";
+import { RoleModel } from "@/models/Role";
+import { Role, Permission } from "@/types/auth";
+import { ConflictError } from "@/utils/errors";
 
-// Mock types
-type MockRequest = Partial<Request>;
-type MockResponse = Partial<Response> & {
-  status: jest.Mock;
-  json: jest.Mock;
-};
-
-// Mock Role model
-jest.mock("../../../models/Role", () => ({
-  RoleModel: {
-    createRole: jest.fn(),
-    getAllRoles: jest.fn(),
-    createPermission: jest.fn(),
+// Mock dependencies
+jest.mock("@/models/Role");
+jest.mock("@/utils/logger", () => ({
+  logger: {
+    info: jest.fn(),
+    debug: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
   },
 }));
 
 describe("RBAC Controller", () => {
-  let mockRequest: MockRequest;
-  let mockResponse: MockResponse;
+  let mockRequest: Partial<Request>;
+  let mockResponse: Partial<Response>;
+  let jsonMock: jest.Mock;
+  let statusMock: jest.Mock;
 
   beforeEach(() => {
-    mockRequest = {};
-    mockResponse = {
-      status: jest.fn().mockReturnThis(),
-      json: jest.fn(),
-    };
-  });
+    jsonMock = jest.fn();
+    statusMock = jest.fn().mockReturnValue({ json: jsonMock });
 
-  afterEach(() => {
+    mockRequest = {
+      body: {},
+    };
+
+    mockResponse = {
+      status: statusMock,
+      json: jsonMock,
+    };
+
     jest.clearAllMocks();
   });
 
   describe("createRole", () => {
-    test("should create a role successfully", async () => {
-      // Setup
+    it("should create a role successfully", async () => {
+      const mockRole: Role = {
+        id: "role-1",
+        name: "Admin",
+        description: "Administrator role",
+        permissions: ["perm-1", "perm-2"],
+      };
+
       mockRequest.body = {
-        name: "Test Role",
-        description: "Test role description",
-        permissions: ["perm1", "perm2"],
+        name: "Admin",
+        description: "Administrator role",
+        permissions: ["perm-1", "perm-2"],
       };
 
-      const createdRole = {
-        id: "role123",
-        name: "Test Role",
-        description: "Test role description",
-        permissions: ["perm1", "perm2"],
-      };
+      (RoleModel.createRole as jest.Mock).mockResolvedValue(mockRole);
 
-      (RoleModel.createRole as jest.Mock).mockResolvedValue(createdRole);
-
-      // Execute
       await createRole(mockRequest as Request, mockResponse as Response);
 
-      // Assert
       expect(RoleModel.createRole).toHaveBeenCalledWith({
-        name: "Test Role",
-        description: "Test role description",
-        permissions: ["perm1", "perm2"],
+        name: "Admin",
+        description: "Administrator role",
+        permissions: ["perm-1", "perm-2"],
       });
-      expect(mockResponse.status).toHaveBeenCalledWith(201);
-      expect(mockResponse.json).toHaveBeenCalledWith({
+
+      expect(statusMock).toHaveBeenCalledWith(201);
+      expect(jsonMock).toHaveBeenCalledWith({
         message: "Role created successfully",
-        role: createdRole,
+        role: mockRole,
       });
     });
 
-    test("should handle errors when creating a role", async () => {
-      // Setup
+    it("should handle conflict error when role name already exists", async () => {
       mockRequest.body = {
-        name: "Test Role",
-        description: "Test role description",
-        permissions: ["perm1", "perm2"],
+        name: "Admin",
+        description: "Administrator role",
+        permissions: [],
       };
 
-      const error = new Error("Role creation failed");
+      const error = new ConflictError(
+        'Role with name "Admin" already exists',
+        "ROLE_NAME_EXISTS"
+      );
       (RoleModel.createRole as jest.Mock).mockRejectedValue(error);
 
-      // Execute
       await createRole(mockRequest as Request, mockResponse as Response);
 
-      // Assert
-      expect(RoleModel.createRole).toHaveBeenCalled();
-      expect(mockResponse.status).toHaveBeenCalledWith(500);
-      expect(mockResponse.json).toHaveBeenCalledWith({
+      expect(statusMock).toHaveBeenCalledWith(409);
+      expect(jsonMock).toHaveBeenCalledWith({
         error: "Failed to create role",
+        message: 'Role with name "Admin" already exists',
       });
     });
   });
 
   describe("getAllRoles", () => {
-    test("should return all roles successfully", async () => {
-      // Setup
-      const roles = [
+    it("should get all roles successfully", async () => {
+      const mockRoles: Role[] = [
         {
-          id: "role1",
+          id: "role-1",
           name: "Admin",
           description: "Administrator role",
-          permissions: ["perm1", "perm2"],
+          permissions: ["perm-1", "perm-2"],
         },
         {
-          id: "role2",
+          id: "role-2",
           name: "User",
-          description: "Regular user",
-          permissions: ["perm3"],
+          description: "Standard user role",
+          permissions: ["perm-3"],
         },
       ];
 
-      (RoleModel.getAllRoles as jest.Mock).mockResolvedValue(roles);
+      (RoleModel.getAllRoles as jest.Mock).mockResolvedValue({
+        roles: mockRoles,
+        hasMore: false,
+      });
 
-      // Execute
       await getAllRoles(mockRequest as Request, mockResponse as Response);
 
-      // Assert
       expect(RoleModel.getAllRoles).toHaveBeenCalled();
-      expect(mockResponse.status).toHaveBeenCalledWith(200);
-      expect(mockResponse.json).toHaveBeenCalledWith({ roles });
+      expect(statusMock).toHaveBeenCalledWith(200);
+      expect(jsonMock).toHaveBeenCalledWith({ roles: mockRoles });
     });
 
-    test("should handle errors when fetching roles", async () => {
-      // Setup
-      const error = new Error("Failed to fetch roles");
+    it("should handle errors when fetching roles", async () => {
+      const error = new Error("Database error");
       (RoleModel.getAllRoles as jest.Mock).mockRejectedValue(error);
 
-      // Execute
       await getAllRoles(mockRequest as Request, mockResponse as Response);
 
-      // Assert
-      expect(RoleModel.getAllRoles).toHaveBeenCalled();
-      expect(mockResponse.status).toHaveBeenCalledWith(500);
-      expect(mockResponse.json).toHaveBeenCalledWith({
+      expect(statusMock).toHaveBeenCalledWith(500);
+      expect(jsonMock).toHaveBeenCalledWith({
         error: "Failed to fetch roles",
+        message: "Database error",
       });
     });
   });
 
   describe("createPermission", () => {
-    test("should create a permission successfully", async () => {
-      // Setup
-      mockRequest.body = {
-        name: "Read Users",
-        description: "Permission to read user data",
+    it("should create a permission successfully", async () => {
+      const mockPermission: Permission = {
+        id: "perm-1",
+        name: "Create User",
+        description: "Can create users",
         resource: "users",
-        action: "read",
+        action: "create",
       };
 
-      const createdPermission = {
-        id: "perm123",
-        name: "Read Users",
-        description: "Permission to read user data",
+      mockRequest.body = {
+        name: "Create User",
+        description: "Can create users",
         resource: "users",
-        action: "read",
+        action: "create",
       };
 
       (RoleModel.createPermission as jest.Mock).mockResolvedValue(
-        createdPermission
+        mockPermission
       );
 
-      // Execute
       await createPermission(mockRequest as Request, mockResponse as Response);
 
-      // Assert
       expect(RoleModel.createPermission).toHaveBeenCalledWith({
-        name: "Read Users",
-        description: "Permission to read user data",
+        name: "Create User",
+        description: "Can create users",
         resource: "users",
-        action: "read",
+        action: "create",
       });
-      expect(mockResponse.status).toHaveBeenCalledWith(201);
-      expect(mockResponse.json).toHaveBeenCalledWith({
+
+      expect(statusMock).toHaveBeenCalledWith(201);
+      expect(jsonMock).toHaveBeenCalledWith({
         message: "Permission created successfully",
-        permission: createdPermission,
+        permission: mockPermission,
       });
     });
 
-    test("should handle errors when creating a permission", async () => {
-      // Setup
+    it("should handle conflict error when permission already exists", async () => {
       mockRequest.body = {
-        name: "Read Users",
-        description: "Permission to read user data",
+        name: "Create User",
+        description: "Can create users",
         resource: "users",
-        action: "read",
+        action: "create",
       };
 
-      const error = new Error("Permission creation failed");
+      const error = new ConflictError(
+        'Permission "users:create" already exists',
+        "PERMISSION_EXISTS"
+      );
       (RoleModel.createPermission as jest.Mock).mockRejectedValue(error);
 
-      // Execute
       await createPermission(mockRequest as Request, mockResponse as Response);
 
-      // Assert
-      expect(RoleModel.createPermission).toHaveBeenCalled();
-      expect(mockResponse.status).toHaveBeenCalledWith(500);
-      expect(mockResponse.json).toHaveBeenCalledWith({
+      expect(statusMock).toHaveBeenCalledWith(409);
+      expect(jsonMock).toHaveBeenCalledWith({
         error: "Failed to create permission",
+        message: 'Permission "users:create" already exists',
       });
     });
   });

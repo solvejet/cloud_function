@@ -3,18 +3,18 @@ import {
   createUser,
   getUserDetails,
   updateUserRoles,
-} from "../controllers/userController";
+} from "@/controllers/userController";
 import {
   verifyToken,
   loadPermissions,
   hasPermission,
-} from "../middleware/auth";
+} from "@/middleware/auth";
 import {
   validateCreateUser,
   validateUpdateUserRoles,
-} from "../middleware/validation/userValidation";
+} from "@/middleware/validation/userValidation";
 
-const router = Router();
+const router: Router = Router();
 
 // Create new user (admin only)
 router.post(

@@ -1,6 +1,8 @@
 import { Request, Response } from "express";
-import { auth } from "../config/firebase";
-import { User } from "../models/User";
+import { auth } from "@/config/firebase";
+import { User } from "@/models/User";
+import { logger } from "@/utils/logger";
+import { AppError } from "@/utils/errors";
 
 export const createUser = async (
   req: Request,
@@ -27,8 +29,19 @@ export const createUser = async (
       userId: userRecord.uid,
     });
   } catch (error) {
-    console.error("Error creating user:", error);
-    res.status(500).json({ error: "Failed to create user" });
+    logger.error({
+      message: "Error creating user",
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      data: { email: req.body.email, displayName: req.body.displayName },
+    });
+
+    // If it's our custom error, use its status code, otherwise use 500
+    const statusCode = error instanceof AppError ? error.statusCode : 500;
+    res.status(statusCode).json({
+      error: "Failed to create user",
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 };
 
@@ -58,8 +71,19 @@ export const getUserDetails = async (
       roles: userRoles?.roleIds || [],
     });
   } catch (error) {
-    console.error("Error fetching user details:", error);
-    res.status(500).json({ error: "Failed to fetch user details" });
+    logger.error({
+      message: "Error fetching user details",
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      userId: req.params.id,
+    });
+
+    // If it's our custom error, use its status code, otherwise use 500
+    const statusCode = error instanceof AppError ? error.statusCode : 500;
+    res.status(statusCode).json({
+      error: "Failed to fetch user details",
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 };
 
@@ -84,7 +108,19 @@ export const updateUserRoles = async (
       message: "User roles updated successfully",
     });
   } catch (error) {
-    console.error("Error updating user roles:", error);
-    res.status(500).json({ error: "Failed to update user roles" });
+    logger.error({
+      message: "Error updating user roles",
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      userId: req.params.id,
+      roleIds: req.body.roleIds,
+    });
+
+    // If it's our custom error, use its status code, otherwise use 500
+    const statusCode = error instanceof AppError ? error.statusCode : 500;
+    res.status(statusCode).json({
+      error: "Failed to update user roles",
+      message: error instanceof Error ? error.message : String(error),
+    });
   }
 };

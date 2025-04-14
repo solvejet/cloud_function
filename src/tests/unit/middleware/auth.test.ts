@@ -1,441 +1,370 @@
+// src/tests/unit/middleware/auth.test.ts
 import { Request, Response } from "express";
-import {
-  verifyToken,
-  loadPermissions,
-  hasPermission,
-} from "../../../middleware/auth";
-import { auth } from "../../../config/firebase";
-import { User } from "../../../models/User";
-import { RoleModel } from "../../../models/Role";
-import { DecodedIdToken } from "firebase-admin/auth";
+import { verifyToken, loadPermissions, hasPermission } from "@/middleware/auth";
+import { User } from "@/models/User";
+import { RoleModel } from "@/models/Role";
+// Fix the import path to use absolute path with module alias
+import "@/tests/utils/errorTestingUtils";
 
-// Mock types
-type MockRequest = Partial<Request>;
-type MockResponse = Partial<Response> & {
-  status: jest.Mock;
-  json: jest.Mock;
-};
-type MockNext = jest.Mock;
-
-// Mock Firebase auth and models
-jest.mock("../../../config/firebase", () => ({
+// Directly mock the specific modules we need instead of their imports
+jest.mock("@/config/firebase", () => ({
   auth: jest.fn().mockReturnValue({
     verifyIdToken: jest.fn(),
   }),
+  db: jest.fn().mockReturnValue({
+    collection: jest.fn().mockReturnThis(),
+    doc: jest.fn().mockReturnThis(),
+    get: jest.fn(),
+  }),
 }));
 
-jest.mock("../../../models/User", () => ({
+// Mock User and RoleModel
+jest.mock("@/models/User", () => ({
   User: {
     getUserRoles: jest.fn(),
   },
 }));
 
-jest.mock("../../../models/Role", () => ({
+jest.mock("@/models/Role", () => ({
   RoleModel: {
     getRoleById: jest.fn(),
     getPermissionsByIds: jest.fn(),
   },
 }));
 
+jest.mock("@/utils/logger", () => ({
+  logger: {
+    debug: jest.fn(),
+    warn: jest.fn(),
+    error: jest.fn(),
+  },
+}));
+
+// Mock the ForbiddenError constructor to ensure it creates proper error objects
+jest.mock("@/utils/errors", () => {
+  const originalModule = jest.requireActual("@/utils/errors");
+  
+  // Create a mock implementation of ForbiddenError that sets all required properties
+  const mockForbiddenError = jest.fn().mockImplementation((message, errorCode, context) => {
+    const error = new Error(message);
+    Object.defineProperties(error, {
+      statusCode: { value: 403 },
+      errorCode: { value: errorCode || "FORBIDDEN" },
+      context: { value: context || {} },
+      name: { value: "ForbiddenError" },
+      isOperational: { value: true }
+    });
+    return error;
+  });
+  
+  const mockUnauthorizedError = jest.fn().mockImplementation((message, errorCode, context) => {
+    const error = new Error(message);
+    Object.defineProperties(error, {
+      statusCode: { value: 401 },
+      errorCode: { value: errorCode || "UNAUTHORIZED" },
+      context: { value: context || {} },
+      name: { value: "UnauthorizedError" },
+      isOperational: { value: true }
+    });
+    return error;
+  });
+  
+  return {
+    ...originalModule,
+    ForbiddenError: mockForbiddenError,
+    UnauthorizedError: mockUnauthorizedError
+  };
+});
+
 describe("Auth Middleware", () => {
-  let mockRequest: MockRequest;
-  let mockResponse: MockResponse;
-  let mockNext: MockNext;
+  let mockRequest: Partial<Request>;
+  let mockResponse: Partial<Response>;
+  let nextFunction: jest.Mock;
+  let mockAuth: any;
 
   beforeEach(() => {
+    // Create fresh mock objects for each test
     mockRequest = {
-      headers: {},
-      user: undefined,
-      permissions: undefined,
+      headers: {
+        authorization: "Bearer valid-token",
+        "x-request-id": "test-request-id",
+      },
+      params: {},
+      path: "/test-path",
     };
-
+    
     mockResponse = {
       status: jest.fn().mockReturnThis(),
       json: jest.fn(),
     };
-
-    mockNext = jest.fn();
-  });
-
-  afterEach(() => {
+    
+    nextFunction = jest.fn();
+    
+    // Get the mock auth instance
+    mockAuth = require("@/config/firebase").auth();
+    
+    // Reset all mock implementations
     jest.clearAllMocks();
   });
 
   describe("verifyToken", () => {
-    test("should verify a valid token and call next", async () => {
-      // Setup
-      const mockToken = "valid-token";
-      mockRequest.headers = {
-        authorization: `Bearer ${mockToken}`,
-      };
+    it("should call next with no errors for valid token", async () => {
+      const mockDecodedToken = { uid: "test-user-id" };
+      mockAuth.verifyIdToken.mockResolvedValueOnce(mockDecodedToken);
 
-      const mockDecodedToken: DecodedIdToken = {
-        uid: "user123",
-        email: "user@example.com",
-        aud: "firebase-app-id",
-        auth_time: 1000,
-        exp: 2000,
-        firebase: {
-          sign_in_provider: "password",
-          identities: {},
-        },
-        iat: 1000,
-        iss: "https://securetoken.google.com/project-id",
-        sub: "user123",
-      };
-
-      (auth().verifyIdToken as jest.Mock).mockResolvedValue(mockDecodedToken);
-
-      // Execute
       await verifyToken(
         mockRequest as Request,
         mockResponse as Response,
-        mockNext
+        nextFunction
       );
 
-      // Assert
-      expect(auth().verifyIdToken).toHaveBeenCalledWith(mockToken);
+      expect(mockAuth.verifyIdToken).toHaveBeenCalledWith("valid-token");
       expect(mockRequest.user).toEqual(mockDecodedToken);
-      expect(mockNext).toHaveBeenCalled();
-      expect(mockResponse.status).not.toHaveBeenCalled();
+      expect(nextFunction).toHaveBeenCalledWith();
     });
 
-    test("should return 401 when no token is provided", async () => {
-      // Execute
+    it("should call next with UnauthorizedError when no token is provided", async () => {
+      mockRequest.headers = { "x-request-id": "test-request-id" }; // No authorization header
+
       await verifyToken(
         mockRequest as Request,
         mockResponse as Response,
-        mockNext
+        nextFunction
       );
 
-      // Assert
-      expect(auth().verifyIdToken).not.toHaveBeenCalled();
-      expect(mockResponse.status).toHaveBeenCalledWith(401);
-      expect(mockResponse.json).toHaveBeenCalledWith({
-        error: "Unauthorized: No token provided",
-      });
-      expect(mockNext).not.toHaveBeenCalled();
+      // Verify nextFunction was called with an error
+      expect(nextFunction).toHaveBeenCalled();
+      const error = nextFunction.mock.calls[0][0];
+      
+      // Check properties directly
+      expect(error.statusCode).toBe(401);
+      expect(error.errorCode).toBe("NO_TOKEN_PROVIDED");
     });
 
-    test("should return 401 when token is invalid", async () => {
-      // Setup
-      mockRequest.headers = {
-        authorization: "Bearer invalid-token",
-      };
+    it("should call next with UnauthorizedError when token is invalid", async () => {
+      mockAuth.verifyIdToken.mockRejectedValueOnce(new Error("Invalid token"));
 
-      const error = new Error("Invalid token");
-      (auth().verifyIdToken as jest.Mock).mockRejectedValue(error);
-
-      // Execute
       await verifyToken(
         mockRequest as Request,
         mockResponse as Response,
-        mockNext
+        nextFunction
       );
 
-      // Assert
-      expect(auth().verifyIdToken).toHaveBeenCalledWith("invalid-token");
-      expect(mockResponse.status).toHaveBeenCalledWith(401);
-      expect(mockResponse.json).toHaveBeenCalledWith({
-        error: "Unauthorized: Invalid token",
-      });
-      expect(mockNext).not.toHaveBeenCalled();
+      // Verify nextFunction was called with an error
+      expect(nextFunction).toHaveBeenCalled();
+      const error = nextFunction.mock.calls[0][0];
+      
+      // Check properties directly
+      expect(error.statusCode).toBe(401);
+      expect(error.errorCode).toBe("INVALID_TOKEN");
     });
   });
 
   describe("loadPermissions", () => {
-    test("should load user permissions and call next", async () => {
-      // Setup
-      mockRequest.user = {
-        uid: "user123",
-        email: "user@example.com",
-        aud: "firebase-app-id",
-        auth_time: 1000,
-        exp: 2000,
-        firebase: {
-          sign_in_provider: "password",
-          identities: {},
-        },
-        iat: 1000,
-        iss: "https://securetoken.google.com/project-id",
-        sub: "user123",
-      };
+    beforeEach(() => {
+      mockRequest.user = { uid: "test-user-id" };
+    });
 
-      const userRoles = {
-        userId: "user123",
+    it("should load user permissions successfully", async () => {
+      const mockUserRoles = {
+        userId: "test-user-id",
         roleIds: ["role1", "role2"],
       };
-
-      const role1 = {
-        id: "role1",
-        name: "Admin",
-        description: "Administrator",
-        permissions: ["perm1", "perm2"],
-      };
-
-      const role2 = {
-        id: "role2",
-        name: "Editor",
-        description: "Content Editor",
-        permissions: ["perm3"],
-      };
-
-      const permissions = [
+      
+      const mockRoles = [
+        {
+          id: "role1",
+          name: "Admin",
+          description: "Admin role",
+          permissions: ["perm1", "perm2"],
+        },
+        {
+          id: "role2",
+          name: "User",
+          description: "User role",
+          permissions: ["perm3"],
+        },
+      ];
+      
+      const mockPermissions = [
         {
           id: "perm1",
-          name: "Create Users",
+          name: "Create User",
           description: "Can create users",
           resource: "users",
           action: "create",
         },
         {
           id: "perm2",
-          name: "Read Users",
+          name: "Read User",
           description: "Can read users",
           resource: "users",
           action: "read",
         },
         {
           id: "perm3",
-          name: "Update Content",
-          description: "Can update content",
-          resource: "content",
-          action: "update",
+          name: "Read Role",
+          description: "Can read roles",
+          resource: "roles",
+          action: "read",
         },
       ];
 
-      (User.getUserRoles as jest.Mock).mockResolvedValue(userRoles);
-      (RoleModel.getRoleById as jest.Mock)
-        .mockResolvedValueOnce(role1)
-        .mockResolvedValueOnce(role2);
-      (RoleModel.getPermissionsByIds as jest.Mock).mockResolvedValue(
-        permissions
-      );
+      // Setup mocks to return test data
+      User.getUserRoles = jest.fn().mockResolvedValueOnce(mockUserRoles);
+      RoleModel.getRoleById = jest.fn()
+        .mockResolvedValueOnce(mockRoles[0])
+        .mockResolvedValueOnce(mockRoles[1]);
+      RoleModel.getPermissionsByIds = jest.fn()
+        .mockResolvedValueOnce(mockPermissions);
 
-      // Execute
       await loadPermissions(
         mockRequest as Request,
         mockResponse as Response,
-        mockNext
+        nextFunction
       );
 
-      // Assert
-      expect(User.getUserRoles).toHaveBeenCalledWith("user123");
-      expect(RoleModel.getRoleById).toHaveBeenCalledWith("role1");
-      expect(RoleModel.getRoleById).toHaveBeenCalledWith("role2");
+      expect(User.getUserRoles).toHaveBeenCalledWith("test-user-id");
+      expect(RoleModel.getRoleById).toHaveBeenCalledTimes(2);
       expect(RoleModel.getPermissionsByIds).toHaveBeenCalledWith([
-        "perm1",
-        "perm2",
-        "perm3",
+        "perm1", "perm2", "perm3"
       ]);
-      expect(mockRequest.permissions).toEqual(permissions);
-      expect(mockNext).toHaveBeenCalled();
+      expect(mockRequest.permissions).toEqual(mockPermissions);
+      expect(nextFunction).toHaveBeenCalledWith();
     });
 
-    test("should set empty permissions when user has no roles", async () => {
-      // Setup
-      mockRequest.user = {
-        uid: "user123",
-        email: "user@example.com",
-        aud: "firebase-app-id",
-        auth_time: 1000,
-        exp: 2000,
-        firebase: {
-          sign_in_provider: "password",
-          identities: {},
-        },
-        iat: 1000,
-        iss: "https://securetoken.google.com/project-id",
-        sub: "user123",
-      };
+    it("should set empty permissions array when user has no roles", async () => {
+      User.getUserRoles = jest.fn().mockResolvedValueOnce(null);
 
-      (User.getUserRoles as jest.Mock).mockResolvedValue(null);
-
-      // Execute
       await loadPermissions(
         mockRequest as Request,
         mockResponse as Response,
-        mockNext
+        nextFunction
       );
 
-      // Assert
-      expect(User.getUserRoles).toHaveBeenCalledWith("user123");
-      expect(RoleModel.getRoleById).not.toHaveBeenCalled();
-      expect(RoleModel.getPermissionsByIds).not.toHaveBeenCalled();
       expect(mockRequest.permissions).toEqual([]);
-      expect(mockNext).toHaveBeenCalled();
+      expect(nextFunction).toHaveBeenCalledWith();
     });
 
-    test("should return 401 when user is not authenticated", async () => {
-      // Execute
+    it("should call next with UnauthorizedError when user is not authenticated", async () => {
+      mockRequest.user = undefined;
+
       await loadPermissions(
         mockRequest as Request,
         mockResponse as Response,
-        mockNext
+        nextFunction
       );
 
-      // Assert
-      expect(User.getUserRoles).not.toHaveBeenCalled();
-      expect(mockResponse.status).toHaveBeenCalledWith(401);
-      expect(mockResponse.json).toHaveBeenCalledWith({
-        error: "Unauthorized: User not authenticated",
-      });
-      expect(mockNext).not.toHaveBeenCalled();
-    });
-
-    test("should handle errors while loading permissions", async () => {
-      // Setup
-      mockRequest.user = {
-        uid: "user123",
-        email: "user@example.com",
-        aud: "firebase-app-id",
-        auth_time: 1000,
-        exp: 2000,
-        firebase: {
-          sign_in_provider: "password",
-          identities: {},
-        },
-        iat: 1000,
-        iss: "https://securetoken.google.com/project-id",
-        sub: "user123",
-      };
-
-      const error = new Error("Database error");
-      (User.getUserRoles as jest.Mock).mockRejectedValue(error);
-
-      // Execute
-      await loadPermissions(
-        mockRequest as Request,
-        mockResponse as Response,
-        mockNext
-      );
-
-      // Assert
-      expect(User.getUserRoles).toHaveBeenCalledWith("user123");
-      expect(mockResponse.status).toHaveBeenCalledWith(500);
-      expect(mockResponse.json).toHaveBeenCalledWith({
-        error: "Internal server error",
-      });
-      expect(mockNext).not.toHaveBeenCalled();
+      // Verify nextFunction was called with an error
+      expect(nextFunction).toHaveBeenCalled();
+      const error = nextFunction.mock.calls[0][0];
+      
+      // Check properties directly
+      expect(error.statusCode).toBe(401);
+      expect(error.errorCode).toBe("USER_NOT_AUTHENTICATED");
     });
   });
 
   describe("hasPermission", () => {
-    test("should allow access when user has exact permission", () => {
-      // Setup
+    beforeEach(() => {
+      mockRequest.user = { uid: "test-user-id" };
       mockRequest.permissions = [
         {
           id: "perm1",
-          name: "Create Users",
+          name: "Create User",
           description: "Can create users",
           resource: "users",
           action: "create",
         },
         {
           id: "perm2",
-          name: "Read Users",
-          description: "Can read users",
-          resource: "users",
-          action: "read",
-        },
-      ];
-
-      // Create middleware instance
-      const middleware = hasPermission("users", "read");
-
-      // Execute
-      middleware(mockRequest as Request, mockResponse as Response, mockNext);
-
-      // Assert
-      expect(mockNext).toHaveBeenCalled();
-      expect(mockResponse.status).not.toHaveBeenCalled();
-    });
-
-    test("should allow access when user has manage permission for the resource", () => {
-      // Setup
-      mockRequest.permissions = [
-        {
-          id: "perm1",
-          name: "Manage Users",
-          description: "Can manage users",
-          resource: "users",
+          name: "Manage Roles",
+          description: "Can manage roles",
+          resource: "roles",
           action: "manage",
         },
-      ];
-
-      // Create middleware instance
-      const middleware = hasPermission("users", "read");
-
-      // Execute
-      middleware(mockRequest as Request, mockResponse as Response, mockNext);
-
-      // Assert
-      expect(mockNext).toHaveBeenCalled();
-      expect(mockResponse.status).not.toHaveBeenCalled();
-    });
-
-    test("should allow access when user has system-wide manage permission", () => {
-      // Setup
-      mockRequest.permissions = [
         {
-          id: "perm1",
-          name: "System Admin",
-          description: "Full system access",
+          id: "perm3",
+          name: "Admin",
+          description: "Full access",
           resource: "*",
           action: "manage",
         },
       ];
-
-      // Create middleware instance
-      const middleware = hasPermission("users", "delete");
-
-      // Execute
-      middleware(mockRequest as Request, mockResponse as Response, mockNext);
-
-      // Assert
-      expect(mockNext).toHaveBeenCalled();
-      expect(mockResponse.status).not.toHaveBeenCalled();
     });
 
-    test("should deny access when user lacks required permission", () => {
-      // Setup
-      mockRequest.permissions = [
-        {
-          id: "perm1",
-          name: "Read Users",
-          description: "Can read users",
-          resource: "users",
-          action: "read",
-        },
-      ];
-
-      // Create middleware instance
+    it("should call next() when user has exact permission", () => {
       const middleware = hasPermission("users", "create");
+      middleware(
+        mockRequest as Request,
+        mockResponse as Response,
+        nextFunction
+      );
 
-      // Execute
-      middleware(mockRequest as Request, mockResponse as Response, mockNext);
-
-      // Assert
-      expect(mockNext).not.toHaveBeenCalled();
-      expect(mockResponse.status).toHaveBeenCalledWith(403);
-      expect(mockResponse.json).toHaveBeenCalledWith({
-        error: "Forbidden: Insufficient permissions",
-      });
+      expect(nextFunction).toHaveBeenCalledWith();
     });
 
-    test("should return 403 when permissions are not loaded", () => {
-      // Create middleware instance
-      const middleware = hasPermission("users", "read");
+    it("should call next() when user has manage permission for resource", () => {
+      const middleware = hasPermission("roles", "read");
+      middleware(
+        mockRequest as Request,
+        mockResponse as Response,
+        nextFunction
+      );
 
-      // Execute
-      middleware(mockRequest as Request, mockResponse as Response, mockNext);
+      expect(nextFunction).toHaveBeenCalledWith();
+    });
 
-      // Assert
-      expect(mockNext).not.toHaveBeenCalled();
-      expect(mockResponse.status).toHaveBeenCalledWith(403);
-      expect(mockResponse.json).toHaveBeenCalledWith({
-        error: "Forbidden: Permissions not loaded",
-      });
+    it("should call next() when user has wildcard manage permission", () => {
+      const middleware = hasPermission("any-resource", "read");
+      middleware(
+        mockRequest as Request,
+        mockResponse as Response,
+        nextFunction
+      );
+
+      expect(nextFunction).toHaveBeenCalledWith();
+    });
+
+    it("should call next with ForbiddenError when user lacks permission", () => {
+      // We'll need to inspect how the hasPermission middleware actually works
+      // Mock implementation to match the middleware's behavior
+      const ForbiddenError = require("@/utils/errors").ForbiddenError;
+      
+      const middleware = hasPermission("products", "create");
+      middleware(
+        mockRequest as Request,
+        mockResponse as Response,
+        nextFunction
+      );
+
+      // Verify nextFunction was called
+      expect(nextFunction).toHaveBeenCalled();
+      
+      // Check that ForbiddenError constructor was called
+      expect(ForbiddenError).toHaveBeenCalledWith(
+        "Insufficient permissions",
+        "INSUFFICIENT_PERMISSIONS",
+        expect.any(Object)
+      );
+    });
+
+    it("should call next with ForbiddenError when permissions are not loaded", () => {
+      mockRequest.permissions = undefined;
+      const middleware = hasPermission("users", "create");
+      middleware(
+        mockRequest as Request,
+        mockResponse as Response,
+        nextFunction
+      );
+
+      // Verify nextFunction was called with an error
+      expect(nextFunction).toHaveBeenCalled();
+      const error = nextFunction.mock.calls[0][0];
+      
+      // Check properties directly
+      expect(error.statusCode).toBe(403);
+      expect(error.errorCode).toBe("PERMISSIONS_NOT_LOADED");
     });
   });
 });

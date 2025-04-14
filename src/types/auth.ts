@@ -1,3 +1,6 @@
+// src/types/auth.ts
+// This file contains standardized auth-related type definitions for the application
+
 export type Permission = {
   id: string;
   name: string;

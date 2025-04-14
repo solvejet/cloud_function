@@ -7,10 +7,16 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
+    "test:debug": "node --inspect-brk -r tsconfig-paths/register ./node_modules/jest/bin/jest.js --runInBand",
+    "test:unit": "jest \"src/tests/unit/.*\\.test\\.ts$\"",
+    "test:integration": "jest \"src/tests/integration/.*\\.test\\.ts$\"",
+    "test:security": "jest \"src/tests/security/.*\\.test\\.ts$\"",
+    "test:performance": "jest \"src/tests/performance/.*\\.test\\.ts$\"",
     "lint": "eslint . --ext .ts",
+    "lint:fix": "eslint . --ext .ts --fix",
     "build": "tsc",
-    "start": "node dist/index.js",
-    "dev": "ts-node src/index.ts"
+    "start": "node -r tsconfig-paths/register dist/index.js",
+    "dev": "ts-node -r tsconfig-paths/register src/index.ts"
   },
   "keywords": [],
   "author": "",
@@ -30,17 +36,20 @@
     "supertest": "^7.1.0",
     "ts-jest": "^29.3.1",
     "ts-node": "^10.9.2",
+    "tsconfig-paths": "^4.2.0",
     "typescript": "^5.8.3"
   },
   "dependencies": {
     "@google-cloud/firestore": "^7.11.0",
     "@google-cloud/secret-manager": "^6.0.1",
     "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
     "express": "^5.1.0",
     "express-validator": "^7.2.1",
     "firebase-admin": "^13.2.0",
     "helmet": "^8.1.0",
     "morgan": "^1.10.0",
+    "uuid": "^11.1.0",
     "winston": "^3.17.0"
   }
 }

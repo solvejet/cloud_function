@@ -3,18 +3,14 @@ import {
   createRole,
   getAllRoles,
   createPermission,
-} from "../controllers/rbacController";
-import {
-  verifyToken,
-  loadPermissions,
-  hasPermission,
-} from "../middleware/auth";
+} from "@/controllers/rbacController";
+import { verifyToken, loadPermissions, hasPermission } from "@/middleware/auth";
 import {
   validateCreateRole,
   validateCreatePermission,
-} from "../middleware/validation/rbacValidation";
+} from "@/middleware/validation/rbacValidation";
 
-const router = Router();
+const router: Router = Router();
 
 // Role routes
 router.post(

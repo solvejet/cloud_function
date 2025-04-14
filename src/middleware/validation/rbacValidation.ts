@@ -1,5 +1,5 @@
-import { Request, Response, NextFunction } from "express";
-import { body, validationResult } from "express-validator";
+import { body } from "express-validator";
+import { validateRequest } from "./validationUtils";
 
 export const validateCreateRole = [
   body("name")
@@ -13,14 +13,7 @@ export const validateCreateRole = [
   body("permissions")
     .isArray()
     .withMessage("permissions must be an array of permission IDs"),
-  (req: Request, res: Response, next: NextFunction): void => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
-    } else {
-      next();
-    }
-  },
+  validateRequest, // Use the utility function for validation
 ];
 
 export const validateCreatePermission = [
@@ -39,12 +32,5 @@ export const validateCreatePermission = [
   body("action")
     .isIn(["create", "read", "update", "delete", "manage"])
     .withMessage("Action must be one of: create, read, update, delete, manage"),
-  (req: Request, res: Response, next: NextFunction): void => {
-    const errors = validationResult(req);
-    if (!errors.isEmpty()) {
-      res.status(400).json({ errors: errors.array() });
-    } else {
-      next();
-    }
-  },
+  validateRequest, // Use the utility function for validation
 ];
